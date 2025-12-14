@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cone Net Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Add jsPDF library for reliable PDF generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        /* Keep print styles as a fallback for Ctrl+P */
+        @media print {
+            @page {
+                size: letter portrait;
+                margin: 0;
+            }
+            body {
+                margin: 0;
+                padding: 0;
+                background: white;
+            }
+            .no-print {
+                display: none !important;
+            }
+            .print-container {
+                width: 100% !important;
+                height: 100% !important;
+                border: none !important;
+                box-shadow: none !important;
+                margin: 0 !important;
+                overflow: hidden !important;
+                position: absolute;
+                top: 0;
+                left: 0;
+            }
+            canvas {
+                width: 21.59cm !important;
+                height: 27.94cm !important;
+                max-width: none !important;
+                max-height: none !important;
+            }
+        }
+        
+        .preview-container {
+            width: 21.59cm;
+            height: 27.94cm;
+            background: white;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            margin: auto;
+            position: relative;
+        }
+
+        .preview-wrapper {
+            overflow: auto;
+            background: #f3f4f6;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem;
+            min-height: 50vh;
+        }
+        
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #2563eb;
+            cursor: pointer;
+            margin-top: -6px;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            background: #e5e7eb;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Constants for US Letter
+        const PPI = 96; 
+        const CM_TO_INCH = 1 / 2.54;
+        const PAGE_WIDTH_CM = 21.59;
+        const PAGE_HEIGHT_CM = 27.94;
+        
+        // High resolution multiplier for crisp canvas lines
+        const SCALE_FACTOR = 4; 
+        
+        // Calculate canvas pixel dimensions
+        const CANVAS_WIDTH_PX = PAGE_WIDTH_CM * CM_TO_INCH * PPI * SCALE_FACTOR;
+        const CANVAS_HEIGHT_PX = PAGE_HEIGHT_CM * CM_TO_INCH * PPI * SCALE_FACTOR;
+        
+        // Logical pixels per cm (for drawing commands)
+        const PIXELS_PER_CM = (PPI * CM_TO_INCH) * SCALE_FACTOR;
+
+        const InputGroup = ({ label, value, onChange, min = 0, max = 30, step = 0.1 }) => (
+            <div className="flex flex-col gap-1 w-full md:w-auto">
+                <div className="flex justify-between items-center">
+                    <label className="text-xs font-medium text-gray-700">{label}</label>
+                    <span className="text-xs font-mono text-gray-500">{value} cm</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <input 
+                        type="range" 
+                        min={min} 
+                        max={max} 
+                        step={step} 
+                        value={value} 
+                        onChange={(e) => onChange(Number(e.target.value))}
+                        className="w-32 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <input 
+                        type="number" 
+                        value={value} 
+                        onChange={(e) => onChange(Number(e.target.value))}
+                        className="w-16 px-2 py-1 border rounded text-sm text-right"
+                        step={step}
+                        min="0"
+                    />
+                </div>
+            </div>
+        );
+
+        const App = () => {
+            const [r1, setR1] = useState(3);
+            const [r2, setR2] = useState(5);
+            const [h, setH] = useState(8);
+            const [isGenerating, setIsGenerating] = useState(false);
+            const canvasRef = useRef(null);
+
+            useEffect(() => {
+                draw();
+            }, [r1, r2, h]);
+
+            const draw = () => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                
+                // Clear canvas
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // White background (Critical for JPEG export)
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Inputs
+                const r_top = Math.min(r1, r2);
+                const r_bottom = Math.max(r1, r2);
+                const height = h;
+
+                // --- Geometry Calculation ---
+                let boundingBox = { minX: 0, maxX: 0, minY: 0, maxY: 0, width: 0, height: 0, centerX: 0, centerY: 0 };
+                let isCylinder = false;
+
+                if (Math.abs(r_bottom - r_top) < 0.001) {
+                    isCylinder = true;
+                    const width = 2 * Math.PI * r_bottom;
+                    const rectH = Math.sqrt(height * height); 
+                    
+                    boundingBox = {
+                        minX: -width / 2,
+                        maxX: width / 2,
+                        minY: -rectH / 2,
+                        maxY: rectH / 2,
+                        width: width,
+                        height: rectH,
+                        centerX: 0,
+                        centerY: 0
+                    };
+                } else {
+                    const s = r_bottom - r_top;
+                    const d_frustum = Math.sqrt(height * height + s * s);
+                    const R_outer = (d_frustum * r_bottom) / s;
+                    // FIX: Ensure R_inner is not negative due to floating point epsilon
+                    const R_inner = Math.max(0, R_outer - d_frustum);
+                    
+                    const theta = (2 * Math.PI * r_bottom) / R_outer;
+
+                    // Aligned with Horizontal Axis
+                    const startAngle = -theta / 2;
+                    const endAngle = theta / 2;
+
+                    // --- Calculate Bounding Box ---
+                    const pointsToCheck = [];
+                    const addPolar = (r, angle) => {
+                        pointsToCheck.push({
+                            x: r * Math.cos(angle),
+                            y: r * Math.sin(angle)
+                        });
+                    };
+
+                    addPolar(R_inner, startAngle);
+                    addPolar(R_inner, endAngle);
+                    addPolar(R_outer, startAngle);
+                    addPolar(R_outer, endAngle);
+
+                    const criticalAngles = [0, Math.PI / 2, -Math.PI / 2, Math.PI, -Math.PI];
+                    criticalAngles.forEach(ang => {
+                        if (ang >= startAngle && ang <= endAngle) {
+                            addPolar(R_inner, ang);
+                            addPolar(R_outer, ang);
+                        }
+                    });
+                    
+                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                    pointsToCheck.forEach(p => {
+                        if (p.x < minX) minX = p.x;
+                        if (p.x > maxX) maxX = p.x;
+                        if (p.y < minY) minY = p.y;
+                        if (p.y > maxY) maxY = p.y;
+                    });
+
+                    boundingBox = {
+                        minX, maxX, minY, maxY,
+                        width: maxX - minX,
+                        height: maxY - minY,
+                        centerX: (minX + maxX) / 2,
+                        centerY: (minY + maxY) / 2
+                    };
+                }
+
+                // --- Rendering ---
+                const pageCX = (PAGE_WIDTH_CM * PIXELS_PER_CM) / 2;
+                const pageCY = (PAGE_HEIGHT_CM * PIXELS_PER_CM) / 2;
+                const shiftX = pageCX - (boundingBox.centerX * PIXELS_PER_CM);
+                const shiftY = pageCY - (boundingBox.centerY * PIXELS_PER_CM);
+
+                ctx.save();
+                ctx.translate(shiftX, shiftY);
+                ctx.scale(PIXELS_PER_CM, PIXELS_PER_CM);
+
+                // Draw Style
+                ctx.strokeStyle = '#2563eb';
+                ctx.lineWidth = 2 / PIXELS_PER_CM;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                if (isCylinder) {
+                    const w = 2 * Math.PI * r_bottom;
+                    const h_rect = Math.sqrt(height * height);
+                    ctx.strokeRect(-w/2, -h_rect/2, w, h_rect);
+                    
+                    ctx.fillStyle = '#1e40af';
+                    ctx.font = `0.5px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`Cylinder: ${w.toFixed(1)}cm x ${h_rect.toFixed(1)}cm`, 0, 0);
+                } else {
+                    const s = r_bottom - r_top;
+                    const d_frustum = Math.sqrt(height * height + s * s);
+                    const R_outer = (d_frustum * r_bottom) / s;
+                    const R_inner = Math.max(0, R_outer - d_frustum);
+                    const theta = (2 * Math.PI * r_bottom) / R_outer;
+                    const startAngle = -theta / 2;
+                    const endAngle = theta / 2;
+
+                    ctx.beginPath();
+                    ctx.arc(0, 0, R_inner, startAngle, endAngle, false);
+                    ctx.lineTo(R_outer * Math.cos(endAngle), R_outer * Math.sin(endAngle));
+                    ctx.arc(0, 0, R_outer, endAngle, startAngle, true);
+                    ctx.closePath();
+                    ctx.stroke();
+
+                    // Centerline
+                    ctx.beginPath();
+                    ctx.strokeStyle = '#94a3b8';
+                    ctx.setLineDash([0.2, 0.2]);
+                    ctx.lineWidth = 1 / PIXELS_PER_CM;
+                    ctx.moveTo(0, 0);
+                    ctx.lineTo(R_outer, 0);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+
+                ctx.restore();
+
+                // Draw Calibration Ruler
+                ctx.save();
+                const margin = 1 * PIXELS_PER_CM;
+                const rulerLen = 5 * PIXELS_PER_CM;
+                const rulerX = (PAGE_WIDTH_CM * PIXELS_PER_CM) - margin - rulerLen;
+                const rulerY = (PAGE_HEIGHT_CM * PIXELS_PER_CM) - margin;
+
+                ctx.beginPath();
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 4;
+                ctx.moveTo(rulerX, rulerY);
+                ctx.lineTo(rulerX + rulerLen, rulerY);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.lineWidth = 2;
+                ctx.moveTo(rulerX, rulerY - 10);
+                ctx.lineTo(rulerX, rulerY + 10);
+                ctx.moveTo(rulerX + rulerLen, rulerY - 10);
+                ctx.lineTo(rulerX + rulerLen, rulerY + 10);
+                ctx.stroke();
+
+                ctx.fillStyle = 'black';
+                ctx.font = `${14 * SCALE_FACTOR}px sans-serif`; 
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.fillText('5 cm Scale Check', rulerX + rulerLen/2, rulerY - 15);
+                
+                // Draw Page Border
+                ctx.strokeStyle = '#e5e7eb';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([20, 20]);
+                ctx.strokeRect(0, 0, CANVAS_WIDTH_PX, CANVAS_HEIGHT_PX);
+                
+                ctx.restore();
+            };
+
+            const downloadPDF = async () => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                
+                setIsGenerating(true);
+
+                try {
+                    // Use jsPDF to generate a PDF file directly
+                    // This bypasses browser print dialog issues and ensures strict dimensions
+                    const { jsPDF } = window.jspdf;
+                    
+                    // Create PDF: Portrait, units: cm, size: letter
+                    // Standard US Letter: 21.59cm x 27.94cm
+                    const doc = new jsPDF({
+                        orientation: 'portrait',
+                        unit: 'cm',
+                        format: [21.59, 27.94]
+                    });
+
+                    // Convert canvas to high-quality JPEG
+                    const imgData = canvas.toDataURL('image/jpeg', 1.0);
+
+                    // Add image to PDF covering the full page
+                    // The canvas is already drawn to exactly match these proportions
+                    doc.addImage(imgData, 'JPEG', 0, 0, 21.59, 27.94);
+
+                    // Download
+                    doc.save('cone-pattern.pdf');
+                } catch (e) {
+                    console.error("PDF generation failed:", e);
+                    alert("Could not generate PDF. Please try again.");
+                }
+                
+                setIsGenerating(false);
+            };
+
+            return (
+                <div className="flex flex-col min-h-screen">
+                    <div className="bg-white border-b border-gray-200 p-4 shadow-sm no-print z-10 relative">
+                        <div className="max-w-6xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-4">
+                            <div>
+                                <h1 className="text-2xl font-bold text-gray-900">Cone Net Generator</h1>
+                                <p className="text-sm text-gray-500">Enter measurements in cm. Download PDF to print.</p>
+                            </div>
+                            
+                            <div className="flex flex-wrap gap-6 items-end bg-gray-50 p-4 rounded-xl border border-gray-200 shadow-sm">
+                                <InputGroup label="Top Radius (r1)" value={r1} onChange={setR1} />
+                                <InputGroup label="Base Radius (r2)" value={r2} onChange={setR2} />
+                                <InputGroup label="Height (h)" value={h} onChange={setH} />
+                            </div>
+                            
+                            <button 
+                                onClick={downloadPDF}
+                                disabled={isGenerating}
+                                className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-6 py-3 rounded-xl font-bold shadow-md transition-all flex items-center gap-2 active:scale-95"
+                            >
+                                {isGenerating ? (
+                                    <span>Generating...</span>
+                                ) : (
+                                    <>
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+                                        </svg>
+                                        Download PDF
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 preview-wrapper">
+                        <div className="preview-container print-container">
+                            <canvas 
+                                ref={canvasRef}
+                                width={CANVAS_WIDTH_PX}
+                                height={CANVAS_HEIGHT_PX}
+                                className="w-full h-full block"
+                            />
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
