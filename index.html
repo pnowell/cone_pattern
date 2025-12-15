@@ -3,15 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cone Net Generator</title>
+    <title>Cone Net & Base Generator</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Add jsPDF library for reliable PDF generation -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
-        /* Keep print styles as a fallback for Ctrl+P */
         @media print {
             @page {
                 size: letter portrait;
@@ -32,15 +30,17 @@
                 box-shadow: none !important;
                 margin: 0 !important;
                 overflow: hidden !important;
-                position: absolute;
-                top: 0;
-                left: 0;
+                position: relative;
+                page-break-after: always;
             }
             canvas {
                 width: 21.59cm !important;
                 height: 27.94cm !important;
                 max-width: none !important;
                 max-height: none !important;
+            }
+            .page-break {
+                page-break-before: always;
             }
         }
         
@@ -57,7 +57,9 @@
             overflow: auto;
             background: #f3f4f6;
             display: flex;
-            justify-content: center;
+            flex-direction: column;
+            gap: 2rem;
+            justify-content: start;
             align-items: center;
             padding: 2rem;
             min-height: 50vh;
@@ -82,28 +84,21 @@
 </head>
 <body class="bg-gray-100 text-gray-800">
 
-    <div id="root"></div>
+    <div id="root" class="flex items-center justify-center min-h-screen text-gray-500">
+        Loading Application...
+    </div>
 
     <script type="text/babel">
+        console.log("Script starting...");
+
+        if (typeof React === 'undefined' || typeof ReactDOM === 'undefined') {
+            console.error("React libraries not loaded.");
+            document.getElementById('root').innerHTML = "<div class='p-4 text-red-600 font-bold'>Error: React libraries failed to load. Please check your internet connection.</div>";
+        }
+
         const { useState, useEffect, useRef } = React;
 
-        // Constants for US Letter
-        const PPI = 96; 
-        const CM_TO_INCH = 1 / 2.54;
-        const PAGE_WIDTH_CM = 21.59;
-        const PAGE_HEIGHT_CM = 27.94;
-        
-        // High resolution multiplier for crisp canvas lines
-        const SCALE_FACTOR = 4; 
-        
-        // Calculate canvas pixel dimensions
-        const CANVAS_WIDTH_PX = PAGE_WIDTH_CM * CM_TO_INCH * PPI * SCALE_FACTOR;
-        const CANVAS_HEIGHT_PX = PAGE_HEIGHT_CM * CM_TO_INCH * PPI * SCALE_FACTOR;
-        
-        // Logical pixels per cm (for drawing commands)
-        const PIXELS_PER_CM = (PPI * CM_TO_INCH) * SCALE_FACTOR;
-
-        const InputGroup = ({ label, value, onChange, min = 0, max = 30, step = 0.1 }) => (
+        const InputGroup = ({ label, value, onChange, min = 0, max = 30, step = 0.1, helpText }) => (
             <div className="flex flex-col gap-1 w-full md:w-auto">
                 <div className="flex justify-between items-center">
                     <label className="text-xs font-medium text-gray-700">{label}</label>
@@ -128,348 +123,446 @@
                         min="0"
                     />
                 </div>
+                {helpText && <p className="text-[10px] text-gray-400 leading-tight">{helpText}</p>}
             </div>
         );
 
         const App = () => {
-            // Helper to safe parse floats from URL
+            const PPI = 96; 
+            const CM_TO_INCH = 1 / 2.54;
+            const PAGE_WIDTH_CM = 21.59;
+            const PAGE_HEIGHT_CM = 27.94;
+            const SCALE_FACTOR = 4; 
+            
+            const CANVAS_WIDTH_PX = PAGE_WIDTH_CM * CM_TO_INCH * PPI * SCALE_FACTOR;
+            const CANVAS_HEIGHT_PX = PAGE_HEIGHT_CM * CM_TO_INCH * PPI * SCALE_FACTOR;
+            const PIXELS_PER_CM = (PPI * CM_TO_INCH) * SCALE_FACTOR;
+
+            // URL Parameter Helpers
             const getParam = (key, defaultVal) => {
-                const params = new URLSearchParams(window.location.search);
-                const val = params.get(key);
-                if (val === null) return defaultVal;
-                const parsed = parseFloat(val);
-                return isNaN(parsed) ? defaultVal : parsed;
+                try {
+                    const params = new URLSearchParams(window.location.search);
+                    const val = params.get(key);
+                    if (val === null) return defaultVal;
+                    const parsed = parseFloat(val);
+                    return isNaN(parsed) ? defaultVal : parsed;
+                } catch (e) {
+                    return defaultVal;
+                }
             };
 
-            // Helper for boolean params
             const getBoolParam = (key, defaultVal) => {
-                const params = new URLSearchParams(window.location.search);
-                const val = params.get(key);
-                if (val === null) return defaultVal;
-                return val === 'true';
+                try {
+                    const params = new URLSearchParams(window.location.search);
+                    const val = params.get(key);
+                    if (val === null) return defaultVal;
+                    return val === 'true';
+                } catch (e) {
+                    return defaultVal;
+                }
             };
 
             const [r1, setR1] = useState(() => getParam('r1', 3));
             const [r2, setR2] = useState(() => getParam('r2', 5));
             const [h, setH] = useState(() => getParam('h', 8));
+            const [rc, setRc] = useState(() => getParam('rc', 1.5));
             const [isHalf, setIsHalf] = useState(() => getBoolParam('half', true));
             const [isGenerating, setIsGenerating] = useState(false);
-            const canvasRef = useRef(null);
+            
+            const coneCanvasRef = useRef(null);
+            const baseCanvasRef = useRef(null);
 
-            // Effect to update URL when state changes
+            // Update URL on state change
             useEffect(() => {
-                const params = new URLSearchParams();
-                params.set('r1', r1);
-                params.set('r2', r2);
-                params.set('h', h);
-                params.set('half', isHalf);
-                
-                // Update URL without reloading page
-                const newRelativePathQuery = window.location.pathname + '?' + params.toString();
-                window.history.replaceState(null, '', newRelativePathQuery);
-            }, [r1, r2, h, isHalf]);
+                try {
+                    const params = new URLSearchParams();
+                    params.set('r1', r1);
+                    params.set('r2', r2);
+                    params.set('h', h);
+                    params.set('rc', rc);
+                    params.set('half', isHalf);
+                    
+                    const newRelativePathQuery = window.location.pathname + '?' + params.toString();
+                    window.history.replaceState(null, '', newRelativePathQuery);
+                } catch (e) {
+                    // Ignore security errors in restricted environments
+                }
+            }, [r1, r2, h, rc, isHalf]);
 
             useEffect(() => {
-                draw();
-            }, [r1, r2, h, isHalf]);
-
-            const draw = () => {
-                const canvas = canvasRef.current;
-                if (!canvas) return;
-                const ctx = canvas.getContext('2d');
-                
-                // Clear canvas
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                
-                // White background (Critical for JPEG export)
-                ctx.fillStyle = 'white';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                // Inputs
-                const r_top = Math.min(r1, r2);
-                const r_bottom = Math.max(r1, r2);
-                const height = h;
-
-                // --- Geometry Calculation ---
-                let boundingBox = { minX: 0, maxX: 0, minY: 0, maxY: 0, width: 0, height: 0, centerX: 0, centerY: 0 };
-                let isCylinder = false;
-
-                if (Math.abs(r_bottom - r_top) < 0.001) {
-                    isCylinder = true;
-                    // Orientation: Height along X, Circumference along Y to match Cone logic
-                    const rectW = height; 
-                    const rectH = 2 * Math.PI * r_bottom;
-                    
-                    // If half, we cut the circumference (rectH) in half, keeping the top part (y < 0)
-                    const startY = -rectH / 2;
-                    const endY = isHalf ? 0 : rectH / 2;
-                    
-                    // We define the rect relative to origin (0,0) being center-left
-                    boundingBox = {
-                        minX: 0,
-                        maxX: rectW,
-                        minY: startY,
-                        maxY: endY,
-                        width: rectW,
-                        height: endY - startY,
-                        centerX: rectW / 2,
-                        centerY: (startY + endY) / 2
-                    };
-                } else {
-                    const s = r_bottom - r_top;
-                    const d_frustum = Math.sqrt(height * height + s * s);
-                    const R_outer = (d_frustum * r_bottom) / s;
-                    // FIX: Ensure R_inner is not negative due to floating point epsilon
-                    const R_inner = Math.max(0, R_outer - d_frustum);
-                    
-                    const theta = (2 * Math.PI * r_bottom) / R_outer;
-
-                    // Aligned with Horizontal Axis
-                    // Top Half corresponds to negative angles (y < 0)
-                    const startAngle = -theta / 2;
-                    const endAngle = isHalf ? 0 : theta / 2;
-
-                    // --- Calculate Bounding Box ---
-                    const pointsToCheck = [];
-                    const addPolar = (r, angle) => {
-                        pointsToCheck.push({
-                            x: r * Math.cos(angle),
-                            y: r * Math.sin(angle)
-                        });
-                    };
-
-                    addPolar(R_inner, startAngle);
-                    addPolar(R_inner, endAngle);
-                    addPolar(R_outer, startAngle);
-                    addPolar(R_outer, endAngle);
-
-                    const criticalAngles = [0, -Math.PI / 2, -Math.PI]; 
-                    if (!isHalf) criticalAngles.push(Math.PI / 2, Math.PI);
-
-                    criticalAngles.forEach(ang => {
-                        if (ang >= startAngle && ang <= endAngle) {
-                            addPolar(R_inner, ang);
-                            addPolar(R_outer, ang);
-                        }
-                    });
-                    
-                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-                    pointsToCheck.forEach(p => {
-                        if (p.x < minX) minX = p.x;
-                        if (p.x > maxX) maxX = p.x;
-                        if (p.y < minY) minY = p.y;
-                        if (p.y > maxY) maxY = p.y;
-                    });
-
-                    boundingBox = {
-                        minX, maxX, minY, maxY,
-                        width: maxX - minX,
-                        height: maxY - minY,
-                        centerX: (minX + maxX) / 2,
-                        centerY: (minY + maxY) / 2
-                    };
+                try {
+                    drawCone();
+                    drawBase();
+                } catch (e) {
+                    console.error("Error in draw function:", e);
                 }
+            }, [r1, r2, h, isHalf, rc]);
 
-                // --- Rendering ---
-                let shiftX, shiftY;
-
-                if (isHalf) {
-                    // Align Bottom-Right with NO margins
-                    // The center line aligns with the paper edge
-                    shiftX = CANVAS_WIDTH_PX - (boundingBox.maxX * PIXELS_PER_CM);
-                    shiftY = CANVAS_HEIGHT_PX - (boundingBox.maxY * PIXELS_PER_CM);
-                } else {
-                    // Center
-                    const pageCX = (PAGE_WIDTH_CM * PIXELS_PER_CM) / 2;
-                    const pageCY = (PAGE_HEIGHT_CM * PIXELS_PER_CM) / 2;
-                    shiftX = pageCX - (boundingBox.centerX * PIXELS_PER_CM);
-                    shiftY = pageCY - (boundingBox.centerY * PIXELS_PER_CM);
-                }
-
+            // Shared Helpers
+            const drawRuler = (ctx, label = "5 cm") => {
                 ctx.save();
-                ctx.translate(shiftX, shiftY);
-                ctx.scale(PIXELS_PER_CM, PIXELS_PER_CM);
-
-                // Draw Style: Black and Thicker
-                ctx.strokeStyle = 'black';
-                ctx.lineWidth = 4 / PIXELS_PER_CM; // Thicker logical line width
-                ctx.lineCap = 'round';
-                ctx.lineJoin = 'round';
-
-                if (isCylinder) {
-                    const rectW = height; 
-                    const rectH = 2 * Math.PI * r_bottom;
-                    const startY = -rectH / 2;
-                    const endY = isHalf ? 0 : rectH / 2;
-                    
-                    ctx.beginPath();
-                    ctx.rect(0, startY, rectW, endY - startY);
-                    ctx.stroke();
-                    
-                    ctx.fillStyle = '#000000';
-                    ctx.font = `0.5px sans-serif`;
-                    ctx.textAlign = 'center';
-                    ctx.fillText(`Cylinder${isHalf ? ' (Half)' : ''}`, rectW/2, (startY+endY)/2);
-                } else {
-                    const s = r_bottom - r_top;
-                    const d_frustum = Math.sqrt(height * height + s * s);
-                    const R_outer = (d_frustum * r_bottom) / s;
-                    const R_inner = Math.max(0, R_outer - d_frustum);
-                    const theta = (2 * Math.PI * r_bottom) / R_outer;
-                    const startAngle = -theta / 2;
-                    const endAngle = isHalf ? 0 : theta / 2;
-
-                    ctx.beginPath();
-                    // Inner Arc
-                    ctx.arc(0, 0, R_inner, startAngle, endAngle, false);
-                    // Line to outer
-                    ctx.lineTo(R_outer * Math.cos(endAngle), R_outer * Math.sin(endAngle));
-                    // Outer Arc (drawn backwards)
-                    ctx.arc(0, 0, R_outer, endAngle, startAngle, true);
-                    // Close
-                    ctx.closePath();
-                    ctx.stroke();
-                }
-
-                ctx.restore();
-
-                // Draw Calibration Ruler - Top Left
-                ctx.save();
-                const rulerMargin = 1.5 * PIXELS_PER_CM; // Slightly more margin
+                const rulerMargin = 1.5 * PIXELS_PER_CM;
                 const rulerLen = 5 * PIXELS_PER_CM;
                 const rulerX = rulerMargin;
-                const rulerY = rulerMargin + (1 * PIXELS_PER_CM); // Push down slightly for text
+                const rulerY = rulerMargin + (1 * PIXELS_PER_CM); 
 
                 ctx.beginPath();
                 ctx.strokeStyle = 'black';
-                ctx.lineWidth = 4; // Screen pixels (consistent thickness)
+                ctx.lineWidth = 4;
                 ctx.moveTo(rulerX, rulerY);
                 ctx.lineTo(rulerX + rulerLen, rulerY);
                 ctx.stroke();
                 
-                // Tick marks
+                // Draw ticks for each cm
                 ctx.beginPath();
                 ctx.lineWidth = 2;
-                ctx.moveTo(rulerX, rulerY - 10);
-                ctx.lineTo(rulerX, rulerY + 10);
-                ctx.moveTo(rulerX + rulerLen, rulerY - 10);
-                ctx.lineTo(rulerX + rulerLen, rulerY + 10);
+                for (let i = 0; i <= 5; i++) {
+                    const tickX = rulerX + (i * PIXELS_PER_CM);
+                    const tickH = (i === 0 || i === 5) ? 10 : 6; // Taller ticks at ends
+                    ctx.moveTo(tickX, rulerY - tickH);
+                    ctx.lineTo(tickX, rulerY + tickH);
+                }
                 ctx.stroke();
 
                 ctx.fillStyle = 'black';
                 ctx.font = `${12 * SCALE_FACTOR}px sans-serif`; 
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'bottom';
-                ctx.fillText('5 cm Scale Check', rulerX, rulerY - 15);
-                
-                // Draw Page Border
+                ctx.fillText(label, rulerX, rulerY - 15);
+                ctx.restore();
+            };
+
+            const drawPageBorder = (ctx) => {
+                ctx.save();
                 ctx.strokeStyle = '#e5e7eb';
                 ctx.lineWidth = 2;
                 ctx.setLineDash([20, 20]);
                 ctx.strokeRect(0, 0, CANVAS_WIDTH_PX, CANVAS_HEIGHT_PX);
-                
                 ctx.restore();
             };
 
-            const downloadPDF = async () => {
-                const canvas = canvasRef.current;
+            // --- CONE DRAWING ---
+            const drawCone = () => {
+                const canvas = coneCanvasRef.current;
                 if (!canvas) return;
+                const ctx = canvas.getContext('2d');
                 
-                setIsGenerating(true);
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                try {
-                    // Use jsPDF to generate a PDF file directly
-                    // This bypasses browser print dialog issues and ensures strict dimensions
-                    const { jsPDF } = window.jspdf;
+                const r_top = Number(Math.min(r1, r2));
+                const r_bottom = Number(Math.max(r1, r2));
+                const height = Number(h);
+
+                let geo = {};
+                
+                if (Math.abs(r_bottom - r_top) < 0.001) {
+                    // Cylinder
+                    const rectW = height; 
+                    const rectH = 2 * Math.PI * r_bottom;
+                    const startY = -rectH / 2;
+                    const endY = isHalf ? 0 : rectH / 2;
                     
-                    // Create PDF: Portrait, units: cm, size: letter
-                    // Standard US Letter: 21.59cm x 27.94cm
+                    geo = { type: 'cylinder', rectW, rectH, startY, endY, minX: 0, maxX: rectW, minY: startY, maxY: endY };
+                } else {
+                    // Cone
+                    const s = r_bottom - r_top;
+                    const d_frustum = Math.sqrt(height * height + s * s);
+                    const R_outer = (d_frustum * r_bottom) / s;
+                    const R_inner = Math.max(0, R_outer - d_frustum);
+                    const theta = (2 * Math.PI * r_bottom) / R_outer;
+                    const startAngle = -theta / 2;
+                    const endAngle = isHalf ? 0 : theta / 2;
+                    
+                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                    const checkPoint = (r, ang) => {
+                        const px = r * Math.cos(ang);
+                        const py = r * Math.sin(ang);
+                        if (px < minX) minX = px; if (px > maxX) maxX = px;
+                        if (py < minY) minY = py; if (py > maxY) maxY = py;
+                    };
+                    checkPoint(R_inner, startAngle); checkPoint(R_inner, endAngle);
+                    checkPoint(R_outer, startAngle); checkPoint(R_outer, endAngle);
+                    const criticalAngles = [0, -Math.PI/2, -Math.PI]; 
+                    if (!isHalf) criticalAngles.push(Math.PI/2, Math.PI);
+                    criticalAngles.forEach(ang => {
+                        if (ang >= startAngle && ang <= endAngle) {
+                            checkPoint(R_inner, ang); checkPoint(R_outer, ang);
+                        }
+                    });
+
+                    geo = { type: 'cone', R_inner, R_outer, startAngle, endAngle, minX, maxX, minY, maxY };
+                }
+
+                // Alignment
+                let shiftX, shiftY;
+                if (isHalf) {
+                    shiftX = CANVAS_WIDTH_PX - (geo.maxX * PIXELS_PER_CM);
+                    shiftY = CANVAS_HEIGHT_PX - (geo.maxY * PIXELS_PER_CM);
+                } else {
+                    const pageCX = (PAGE_WIDTH_CM * PIXELS_PER_CM) / 2;
+                    const pageCY = (PAGE_HEIGHT_CM * PIXELS_PER_CM) / 2;
+                    shiftX = pageCX - ((geo.minX + geo.maxX) / 2 * PIXELS_PER_CM);
+                    shiftY = pageCY - ((geo.minY + geo.maxY) / 2 * PIXELS_PER_CM);
+                }
+
+                ctx.save();
+                ctx.translate(shiftX, shiftY);
+                ctx.scale(PIXELS_PER_CM, PIXELS_PER_CM);
+
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 4 / PIXELS_PER_CM; 
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                if (geo.type === 'cylinder') {
+                    ctx.beginPath();
+                    ctx.rect(0, geo.startY, geo.rectW, geo.endY - geo.startY);
+                    ctx.stroke();
+                    
+                    // Quarter Marks
+                    ctx.save();
+                    ctx.setLineDash([0.2, 0.2]); 
+                    const quarterH = geo.rectH / 4;
+                    const linesY = [-quarterH]; 
+                    if (!isHalf) { linesY.push(0); linesY.push(quarterH); }
+                    ctx.beginPath();
+                    linesY.forEach(y => { ctx.moveTo(0, y); ctx.lineTo(geo.rectW, y); });
+                    ctx.stroke();
+                    ctx.restore();
+
+                    ctx.fillStyle = '#000000';
+                    ctx.font = `0.5px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`Cylinder Net${isHalf ? ' (Half)' : ''}`, geo.rectW/2, (geo.startY+geo.endY)/2);
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(0, 0, geo.R_inner, geo.startAngle, geo.endAngle, false);
+                    ctx.lineTo(geo.R_outer * Math.cos(geo.endAngle), geo.R_outer * Math.sin(geo.endAngle));
+                    ctx.arc(0, 0, geo.R_outer, geo.endAngle, geo.startAngle, true);
+                    ctx.closePath();
+                    ctx.stroke();
+
+                    // Quarter Marks
+                    ctx.save();
+                    ctx.setLineDash([0.2, 0.2]); 
+                    const quarterAngle = geo.startAngle / 2;
+                    const angles = [quarterAngle];
+                    if (!isHalf) { angles.push(0); angles.push(-quarterAngle); }
+                    ctx.beginPath();
+                    angles.forEach(ang => {
+                        ctx.moveTo(geo.R_inner * Math.cos(ang), geo.R_inner * Math.sin(ang));
+                        ctx.lineTo(geo.R_outer * Math.cos(ang), geo.R_outer * Math.sin(ang));
+                    });
+                    ctx.stroke();
+                    ctx.restore();
+                }
+                ctx.restore();
+
+                drawRuler(ctx, "5 cm");
+                drawPageBorder(ctx);
+            };
+
+            // --- BASE DRAWING ---
+            const drawBase = () => {
+                const canvas = baseCanvasRef.current;
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Calculations
+                const P = 2 * Math.PI * r2;
+                const effRc = Math.min(rc, r2);
+                const L = (Math.PI / 2) * (r2 - effRc);
+                
+                const halfL = L / 2;
+                const totalW = L + 2 * effRc;
+                
+                const pageCX = (PAGE_WIDTH_CM * PIXELS_PER_CM) / 2;
+                const pageCY = (PAGE_HEIGHT_CM * PIXELS_PER_CM) / 2;
+
+                ctx.save();
+                ctx.translate(pageCX, pageCY);
+                ctx.scale(PIXELS_PER_CM, PIXELS_PER_CM);
+                
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 4 / PIXELS_PER_CM; 
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                ctx.beginPath();
+                // Top Edge (Left to Right)
+                ctx.moveTo(-halfL, -(halfL + effRc));
+                ctx.lineTo(halfL, -(halfL + effRc));
+                // Top Right Corner
+                ctx.arc(halfL, -halfL, effRc, -Math.PI/2, 0);
+                // Right Edge
+                ctx.lineTo(halfL + effRc, halfL);
+                // Bottom Right Corner
+                ctx.arc(halfL, halfL, effRc, 0, Math.PI/2);
+                // Bottom Edge
+                ctx.lineTo(-halfL, halfL + effRc);
+                // Bottom Left Corner
+                ctx.arc(-halfL, halfL, effRc, Math.PI/2, Math.PI);
+                // Left Edge
+                ctx.lineTo(-(halfL + effRc), -halfL);
+                // Top Left Corner
+                ctx.arc(-halfL, -halfL, effRc, Math.PI, -Math.PI/2);
+                
+                ctx.closePath();
+                ctx.stroke();
+
+                // Draw Diagonals (Dashed lines across corners)
+                ctx.save();
+                ctx.setLineDash([0.1, 0.2]); // Dotted (0.1cm dash, 0.2cm gap)
+                ctx.lineWidth = 2 / PIXELS_PER_CM;
+                
+                const distToCornerCenter = halfL * Math.sqrt(2);
+                const distToEdge = distToCornerCenter + effRc;
+                const lineExtent = distToEdge + 0.5;
+
+                ctx.beginPath();
+                const cos45 = Math.cos(Math.PI/4);
+                const sin45 = Math.sin(Math.PI/4);
+                
+                ctx.moveTo(-lineExtent * cos45, -lineExtent * sin45);
+                ctx.lineTo(lineExtent * cos45, lineExtent * sin45);
+
+                ctx.moveTo(lineExtent * cos45, -lineExtent * sin45);
+                ctx.lineTo(-lineExtent * cos45, lineExtent * sin45);
+                
+                ctx.stroke();
+                ctx.restore();
+                
+                // Text Label
+                ctx.fillStyle = '#666';
+                ctx.font = `0.4px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(`Base`, 0, -0.6);
+                ctx.font = `0.3px sans-serif`;
+                ctx.fillText(`r2=${r2}cm, rc=${effRc.toFixed(2)}cm`, 0, -0.2);
+
+                ctx.restore();
+                ctx.restore();
+
+                drawRuler(ctx, "5 cm");
+                drawPageBorder(ctx);
+            };
+
+            const downloadPDF = async (target) => {
+                const canvas = target === 'base' ? baseCanvasRef.current : coneCanvasRef.current;
+                const filename = target === 'base' ? 'mug-base-pattern.pdf' : 'mug-cone-pattern.pdf';
+                
+                if (!canvas) return;
+                setIsGenerating(true);
+                try {
+                    if (!window.jspdf) throw new Error("jsPDF not loaded");
+                    const { jsPDF } = window.jspdf;
                     const doc = new jsPDF({
                         orientation: 'portrait',
                         unit: 'cm',
                         format: [21.59, 27.94]
                     });
-
-                    // Convert canvas to high-quality JPEG
                     const imgData = canvas.toDataURL('image/jpeg', 1.0);
-
-                    // Add image to PDF covering the full page
-                    // The canvas is already drawn to exactly match these proportions
                     doc.addImage(imgData, 'JPEG', 0, 0, 21.59, 27.94);
-
-                    // Download
-                    doc.save('cone-pattern.pdf');
+                    doc.save(filename);
                 } catch (e) {
-                    console.error("PDF generation failed:", e);
-                    alert("Could not generate PDF. Please try again.");
+                    alert("PDF Error: " + e.message);
                 }
-                
                 setIsGenerating(false);
             };
 
             return (
                 <div className="flex flex-col min-h-screen">
-                    <div className="bg-white border-b border-gray-200 p-4 shadow-sm no-print z-10 relative">
-                        <div className="max-w-6xl mx-auto flex flex-col xl:flex-row items-center justify-between gap-6">
-                            <div>
-                                <h1 className="text-2xl font-bold text-gray-900">Cone Net Generator</h1>
-                                <p className="text-sm text-gray-500">Enter measurements in cm. Download PDF to print.</p>
-                            </div>
+                    <div className="bg-white border-b border-gray-200 p-2 shadow-sm no-print z-10 sticky top-0">
+                        <div className="w-full max-w-full mx-auto flex flex-wrap items-center justify-center gap-x-6 gap-y-2 px-4">
+                            <InputGroup label="Top Radius (r1)" value={r1} onChange={setR1} />
+                            <InputGroup label="Base Radius (r2)" value={r2} onChange={setR2} helpText="Sets total perimeter" />
+                            <InputGroup label="Height (h)" value={h} onChange={setH} />
+                            <InputGroup 
+                                label="Base Corner (rc)" 
+                                value={rc} 
+                                onChange={setRc} 
+                                max={r2}
+                                helpText={`Max: ${r2}cm`}
+                            />
                             
-                            <div className="flex flex-col sm:flex-row gap-6 items-center bg-gray-50 p-4 rounded-xl border border-gray-200 shadow-sm">
-                                <InputGroup label="Top Radius (r1)" value={r1} onChange={setR1} />
-                                <InputGroup label="Base Radius (r2)" value={r2} onChange={setR2} />
-                                <InputGroup label="Height (h)" value={h} onChange={setH} />
-                                
-                                <div className="flex items-center gap-2 border-l pl-4 border-gray-300">
-                                    <input 
-                                        type="checkbox" 
-                                        id="halfPattern"
-                                        checked={isHalf} 
-                                        onChange={(e) => setIsHalf(e.target.checked)}
-                                        className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 border-gray-300"
-                                    />
-                                    <label htmlFor="halfPattern" className="text-sm font-medium text-gray-700 cursor-pointer select-none">
-                                        Half Pattern<br/><span className="text-xs text-gray-500 font-normal">(Symmetric)</span>
-                                    </label>
-                                </div>
+                            <div className="flex items-center gap-2 border-l pl-4 border-gray-300 py-1">
+                                <input 
+                                    type="checkbox" 
+                                    id="halfPattern"
+                                    checked={isHalf} 
+                                    onChange={(e) => setIsHalf(e.target.checked)}
+                                    className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 border-gray-300"
+                                />
+                                <label htmlFor="halfPattern" className="text-xs font-medium text-gray-700 cursor-pointer select-none leading-tight">
+                                    Half Pattern<br/><span className="text-[10px] text-gray-500 font-normal">(Cone Only)</span>
+                                </label>
                             </div>
-                            
-                            <button 
-                                onClick={downloadPDF}
-                                disabled={isGenerating}
-                                className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-6 py-3 rounded-xl font-bold shadow-md transition-all flex items-center gap-2 active:scale-95 whitespace-nowrap"
-                            >
-                                {isGenerating ? (
-                                    <span>Generating...</span>
-                                ) : (
-                                    <>
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                        <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
-                                        </svg>
-                                        Download PDF
-                                    </>
-                                )}
-                            </button>
+
+                            <div className="flex gap-2 border-l pl-4 border-gray-300">
+                                <button 
+                                    onClick={() => downloadPDF('cone')}
+                                    disabled={isGenerating}
+                                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-4 py-2 rounded-lg font-bold shadow-md transition-all active:scale-95 text-xs whitespace-nowrap"
+                                >
+                                    Download Cone
+                                </button>
+                                <button 
+                                    onClick={() => downloadPDF('base')}
+                                    disabled={isGenerating}
+                                    className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white px-4 py-2 rounded-lg font-bold shadow-md transition-all active:scale-95 text-xs whitespace-nowrap"
+                                >
+                                    Download Base
+                                </button>
+                            </div>
                         </div>
                     </div>
 
                     <div className="flex-1 preview-wrapper">
-                        <div className="preview-container print-container">
-                            <canvas 
-                                ref={canvasRef}
-                                width={CANVAS_WIDTH_PX}
-                                height={CANVAS_HEIGHT_PX}
-                                className="w-full h-full block"
-                            />
+                        {/* Cone Preview */}
+                        <div className="flex flex-col gap-2">
+                            <h2 className="text-lg font-semibold text-center text-gray-600">Wall Pattern</h2>
+                            <div className="preview-container print-container">
+                                <canvas 
+                                    ref={coneCanvasRef}
+                                    width={CANVAS_WIDTH_PX}
+                                    height={CANVAS_HEIGHT_PX}
+                                    className="w-full h-full block"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Base Preview */}
+                        <div className="flex flex-col gap-2">
+                            <h2 className="text-lg font-semibold text-center text-gray-600">Base Pattern (Rounded Square)</h2>
+                            <div className="preview-container print-container">
+                                <canvas 
+                                    ref={baseCanvasRef}
+                                    width={CANVAS_WIDTH_PX}
+                                    height={CANVAS_HEIGHT_PX}
+                                    className="w-full h-full block"
+                                />
+                            </div>
                         </div>
                     </div>
                 </div>
             );
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        try {
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<App />);
+            console.log("React render called.");
+        } catch (err) {
+            console.error("Failed to render React app:", err);
+            document.getElementById('root').innerHTML = "<div class='p-4 text-red-600'>Application Error: " + err.message + "</div>";
+        }
     </script>
 </body>
 </html>
