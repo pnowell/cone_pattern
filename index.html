@@ -10,6 +10,7 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
+        /* Print styles - Strictly enforce physical dimensions */
         @media print {
             @page {
                 size: letter portrait;
@@ -44,27 +45,28 @@
             }
         }
         
+        /* Screen styles - Responsive scaling */
         .preview-container {
-            width: 21.59cm;
-            height: 27.94cm;
+            /* Max width is physical size */
+            max-width: 21.59cm;
+            /* Width fills container but respects max */
+            width: 100%;
+            /* Maintain aspect ratio of US Letter (21.59 / 27.94 = ~0.7727) */
+            aspect-ratio: 2159 / 2794;
             background: white;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-            margin: auto;
+            /* Height auto lets aspect-ratio drive the height */
+            height: auto;
             position: relative;
         }
 
-        .preview-wrapper {
-            overflow: auto;
-            background: #f3f4f6;
-            display: flex;
-            flex-direction: column;
-            gap: 2rem;
-            justify-content: start;
-            align-items: center;
-            padding: 2rem;
-            min-height: 50vh;
+        /* Canvas fits the container on screen */
+        .preview-container canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
         }
-        
+
         input[type=range]::-webkit-slider-thumb {
             -webkit-appearance: none;
             height: 16px;
@@ -99,12 +101,13 @@
         const { useState, useEffect, useRef } = React;
 
         const InputGroup = ({ label, value, onChange, min = 0, max = 30, step = 0.1, helpText }) => (
-            <div className="flex flex-col gap-1 w-full md:w-auto">
-                <div className="flex justify-between items-center">
+            // Added px-2 to provide an internal buffer for slider thumbs
+            <div className="flex flex-col gap-1 flex-shrink-0 w-44 sm:w-48 px-2">
+                <div className="flex justify-between items-center w-full">
                     <label className="text-xs font-medium text-gray-700">{label}</label>
                     <span className="text-xs font-mono text-gray-500">{value} cm</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 w-full">
                     <input 
                         type="range" 
                         min={min} 
@@ -112,18 +115,18 @@
                         step={step} 
                         value={value} 
                         onChange={(e) => onChange(Number(e.target.value))}
-                        className="w-32 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                        className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                     />
                     <input 
                         type="number" 
                         value={value} 
                         onChange={(e) => onChange(Number(e.target.value))}
-                        className="w-16 px-2 py-1 border rounded text-sm text-right"
+                        className="w-14 px-1 py-1 border rounded text-sm text-right"
                         step={step}
                         min="0"
                     />
                 </div>
-                {helpText && <p className="text-[10px] text-gray-400 leading-tight">{helpText}</p>}
+                {helpText && <p className="text-[10px] text-gray-400 leading-tight w-full text-right">{helpText}</p>}
             </div>
         );
 
@@ -185,7 +188,7 @@
                     const newRelativePathQuery = window.location.pathname + '?' + params.toString();
                     window.history.replaceState(null, '', newRelativePathQuery);
                 } catch (e) {
-                    // Ignore security errors in restricted environments
+                    // Ignore security errors
                 }
             }, [r1, r2, h, rc, isHalf]);
 
@@ -213,12 +216,12 @@
                 ctx.lineTo(rulerX + rulerLen, rulerY);
                 ctx.stroke();
                 
-                // Draw ticks for each cm
+                // Draw ticks
                 ctx.beginPath();
                 ctx.lineWidth = 2;
                 for (let i = 0; i <= 5; i++) {
                     const tickX = rulerX + (i * PIXELS_PER_CM);
-                    const tickH = (i === 0 || i === 5) ? 10 : 6; // Taller ticks at ends
+                    const tickH = (i === 0 || i === 5) ? 10 : 6; 
                     ctx.moveTo(tickX, rulerY - tickH);
                     ctx.lineTo(tickX, rulerY + tickH);
                 }
@@ -247,6 +250,9 @@
                 if (!canvas) return;
                 const ctx = canvas.getContext('2d');
                 
+                if (canvas.width !== CANVAS_WIDTH_PX) canvas.width = CANVAS_WIDTH_PX;
+                if (canvas.height !== CANVAS_HEIGHT_PX) canvas.height = CANVAS_HEIGHT_PX;
+
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.fillStyle = 'white';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -370,6 +376,9 @@
                 if (!canvas) return;
                 const ctx = canvas.getContext('2d');
                 
+                if (canvas.width !== CANVAS_WIDTH_PX) canvas.width = CANVAS_WIDTH_PX;
+                if (canvas.height !== CANVAS_HEIGHT_PX) canvas.height = CANVAS_HEIGHT_PX;
+                
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.fillStyle = 'white';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -380,7 +389,6 @@
                 const L = (Math.PI / 2) * (r2 - effRc);
                 
                 const halfL = L / 2;
-                const totalW = L + 2 * effRc;
                 
                 const pageCX = (PAGE_WIDTH_CM * PIXELS_PER_CM) / 2;
                 const pageCY = (PAGE_HEIGHT_CM * PIXELS_PER_CM) / 2;
@@ -416,9 +424,9 @@
                 ctx.closePath();
                 ctx.stroke();
 
-                // Draw Diagonals (Dashed lines across corners)
+                // Draw Diagonals
                 ctx.save();
-                ctx.setLineDash([0.1, 0.2]); // Dotted (0.1cm dash, 0.2cm gap)
+                ctx.setLineDash([0.1, 0.2]); 
                 ctx.lineWidth = 2 / PIXELS_PER_CM;
                 
                 const distToCornerCenter = halfL * Math.sqrt(2);
@@ -477,10 +485,14 @@
                 setIsGenerating(false);
             };
 
+            // Layout Container: Fixed full viewport, no overflow on body
             return (
-                <div className="flex flex-col min-h-screen">
-                    <div className="bg-white border-b border-gray-200 p-2 shadow-sm no-print z-10 sticky top-0">
-                        <div className="w-full max-w-full mx-auto flex flex-wrap items-center justify-center gap-x-6 gap-y-2 px-4">
+                <div className="flex flex-col h-screen w-screen overflow-hidden bg-gray-100">
+                    
+                    {/* Header: Auto-height based on content */}
+                    <div className="flex-none bg-white border-b border-gray-200 p-2 shadow-sm no-print z-10 relative">
+                        {/* Increased horizontal gap to gap-x-12 for better separation */}
+                        <div className="w-full max-w-full mx-auto flex flex-wrap items-center justify-center gap-x-12 gap-y-4 px-4">
                             <InputGroup label="Top Radius (r1)" value={r1} onChange={setR1} />
                             <InputGroup label="Base Radius (r2)" value={r2} onChange={setR2} helpText="Sets total perimeter" />
                             <InputGroup label="Height (h)" value={h} onChange={setH} />
@@ -492,7 +504,7 @@
                                 helpText={`Max: ${r2}cm`}
                             />
                             
-                            <div className="flex items-center gap-2 border-l pl-4 border-gray-300 py-1">
+                            <div className="flex items-center gap-2 py-1 flex-shrink-0 px-2">
                                 <input 
                                     type="checkbox" 
                                     id="halfPattern"
@@ -505,49 +517,50 @@
                                 </label>
                             </div>
 
-                            <div className="flex gap-2 border-l pl-4 border-gray-300">
+                            <div className="flex gap-2 flex-shrink-0 px-2">
                                 <button 
                                     onClick={() => downloadPDF('cone')}
                                     disabled={isGenerating}
                                     className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-4 py-2 rounded-lg font-bold shadow-md transition-all active:scale-95 text-xs whitespace-nowrap"
                                 >
-                                    Download Cone
+                                    Cone PDF
                                 </button>
                                 <button 
                                     onClick={() => downloadPDF('base')}
                                     disabled={isGenerating}
                                     className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white px-4 py-2 rounded-lg font-bold shadow-md transition-all active:scale-95 text-xs whitespace-nowrap"
                                 >
-                                    Download Base
+                                    Base PDF
                                 </button>
                             </div>
                         </div>
                     </div>
 
-                    <div className="flex-1 preview-wrapper">
-                        {/* Cone Preview */}
-                        <div className="flex flex-col gap-2">
-                            <h2 className="text-lg font-semibold text-center text-gray-600">Wall Pattern</h2>
-                            <div className="preview-container print-container">
-                                <canvas 
-                                    ref={coneCanvasRef}
-                                    width={CANVAS_WIDTH_PX}
-                                    height={CANVAS_HEIGHT_PX}
-                                    className="w-full h-full block"
-                                />
+                    {/* Content: Fills remaining space, handles own scrolling */}
+                    <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 bg-gray-100 w-full">
+                        <div className="flex flex-col items-center gap-8 min-h-min w-full">
+                            {/* Cone Preview */}
+                            <div className="flex flex-col gap-2 items-center w-full">
+                                <h2 className="text-lg font-semibold text-gray-600">Wall Pattern</h2>
+                                <div className="preview-container print-container">
+                                    <canvas 
+                                        ref={coneCanvasRef}
+                                        width={CANVAS_WIDTH_PX}
+                                        height={CANVAS_HEIGHT_PX}
+                                    />
+                                </div>
                             </div>
-                        </div>
 
-                        {/* Base Preview */}
-                        <div className="flex flex-col gap-2">
-                            <h2 className="text-lg font-semibold text-center text-gray-600">Base Pattern (Rounded Square)</h2>
-                            <div className="preview-container print-container">
-                                <canvas 
-                                    ref={baseCanvasRef}
-                                    width={CANVAS_WIDTH_PX}
-                                    height={CANVAS_HEIGHT_PX}
-                                    className="w-full h-full block"
-                                />
+                            {/* Base Preview */}
+                            <div className="flex flex-col gap-2 items-center pb-8 w-full">
+                                <h2 className="text-lg font-semibold text-gray-600">Base Pattern (Rounded Square)</h2>
+                                <div className="preview-container print-container">
+                                    <canvas 
+                                        ref={baseCanvasRef}
+                                        width={CANVAS_WIDTH_PX}
+                                        height={CANVAS_HEIGHT_PX}
+                                    />
+                                </div>
                             </div>
                         </div>
                     </div>
